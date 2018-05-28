@@ -1,0 +1,370 @@
+#!/usr/bin/perl -w
+# $Header: /home/sjs/bin/RCS/adb_proxy,v 1.7 2018/05/28 22:59:14 sjs Exp $
+use strict;
+use warnings;
+use Cwd 'abs_path';
+use FileHandle;
+$|++;
+
+my ($Exec, $Func) = (abs_path($0) =~ m{^(.*)/(.*)});
+
+my %CmdTable = (
+    'install' => {exec => \&InstallAPK
+        , help => "install package: Install and start the apk file passed in." },
+    'list' =>       {exec => \&DoList
+        , help => 'Print a list of found devices and exit.'},
+    'ls' =>       {exec => \&DoLs
+        , help => 'Execute the ls command on the target.'},
+    'packages' => {exec => \&GetAPK
+        , help => "packages <regex>  List packages found on the device."
+            . "\n        Filter using <regex> if one is given."},
+    'pull'      => {exec => \&DoPull
+        , help => 'device_file host_file    '
+            . 'Read device_file from the device to host_file.'},
+    'push'      => {exec => \&DoPush
+        , help =>  'host_file device_file    '
+            . 'host_file device_file    Copy the host_file to the device_file.'},
+    'reset'    => {exec => \&DoReset
+        , help => "<-s>   Reset ADB abd display detected devices.  If <-s> is set,\n"
+            . "    reset is executed as root.  'Reset' means adb kill-server;\n"
+            . "    adb start-server; adb devices." },
+    'shell'      => {exec => \&DoShell
+        , help => 'device_file host_file    '
+            . 'Execute a shell command on host.'},
+    'uninstall' => {exec => \&UninstallPackage
+        , help => "unistall package: remove the apk indicated by the package." },
+);
+my $USAGE = "USAGE of $Func:
+    To run a function on one or more devices, run
+        \"$Func device_0 ... device_n command ...\"
+    To run a function on all devices, run
+        \"$Func all command...\"
+    Possible commands are:\n"
+    . join('', map {
+        sprintf("    %-10s: %s\n", $_, $CmdTable{$_}{help});
+    } sort keys %CmdTable)
+    . "\n";
+
+chomp(my $ADB=`/usr/bin/which adb`);
+die $USAGE, "Failed to find adb\n" unless $ADB;
+chomp (my $AAPT = `/usr/bin/which aapt`);
+die $USAGE, "Failed to locate aapt.\n" unless ($AAPT);
+
+my %FoundDevices = ();
+my %FoundDeviceIndexes = ();
+my @SelectedDevices = ();
+my (%IndexedDevices, %DeviceIds);
+sub PrintDevices {
+    my $rv = "";
+    for my $id (@SelectedDevices) {
+        $rv .= sprintf("%2d) %s\n"
+            , $FoundDevices{$id}{index} + 1, $FoundDevices{$id}{desc});
+    }
+    return $rv;
+}
+my $Verbose;
+if (grep $_ eq '-v', @ARGV) {
+    $Verbose++;
+    @ARGV = grep $_ ne '-v', @ARGV;
+}
+my $Force;
+if (grep $_ eq '-f', @ARGV) {
+    $Force++;
+    @ARGV = grep $_ ne '-f', @ARGV;
+}
+
+# executables needed.
+my @PropertyKeys = qw(
+    ro.build.version.release
+    ro.build.version.sdk
+    ro.product.brand
+    ro.product.manufacturer
+    ro.product.model
+    ro.product.name
+);
+
+# Return a list of hash references to device properties.
+sub GetDevices {
+    my %device_properties;
+    chomp(my @devices = `$ADB devices -l`);
+    if(my @unauthorized = grep /\bunauthorized\b/, @devices) {
+        die "Unauthorized devices found:\n"
+        , join("\n", @unauthorized, '');
+    }
+    my $index = 0;
+    for my $device (sort @devices) {
+        if ($device =~ m{^(\S+)\s+device\s+(.*)}) {
+            my $id = $1;
+            $FoundDeviceIndexes{$index+1} = $id;
+            chomp(my @properties = `$ADB -s $id shell getprop`);
+            my %dev_info = (id => $id);
+            $dev_info{index} = $index++;
+            map {s/\cM//; s/[\[\]]//g;}@properties;
+            for my $key (@PropertyKeys) {
+                my $k = $key;
+                $k =~ s/^ro\.[^\.]+\.//;
+                if ((grep(/$key/, @properties))[0] =~ m{:\s+(.*)}) {
+                    $dev_info{$k} = $1;
+                }
+            }
+            $dev_info{desc} = sprintf('%-19s %-20s Android %-6s API=%-3s',
+                $id, "$dev_info{brand} $dev_info{model}",
+                $dev_info{'version.release'}, $dev_info{'version.sdk'});
+            $device_properties{$id} = \%dev_info;
+        }
+    }
+    return %device_properties;
+}
+sub GetInstalledAPK {
+    my $device = shift @_;
+    my @cmd = ($ADB, '-s', $device,
+        qw(shell pm list packages -f));
+    chomp (my @packages = `@cmd`);
+    map {s/[\n\r]//g; s/package://;} @packages;
+    return @packages;
+}
+sub GetMatches {
+    my ($id, $desc, @regexes) = @_;
+    print "Fetching packages from\n$desc\n";
+    my @packages = GetInstalledAPK($id);
+    map {s/^package://;} @packages;
+    # map {s/^.*=//; }@packages;
+    print "Found ", scalar @packages, " packages.\n";
+    my @matches = ();
+    for my $regex (@regexes) {
+        push @matches, grep /$regex/, @packages;
+    }
+    return @matches;
+}
+sub DoShell {
+    for my $id (@SelectedDevices) {
+        print "======== $FoundDevices{$id}{desc}\n";
+        print"> @_\n";
+        shift @_; # get rid of the redundant shell commoan.
+        my $cmd = join(' ', $ADB, '-s', $id, 'shell', @_, '2>&1', '|');
+        open(my $fh, $cmd) || die "open \"$cmd\" FAILED\n";
+        my @lines = <$fh>;
+        $fh->close();
+        map { s/[\r|\n].*//s; } @lines;
+        print join("\n", @lines, "\n");
+    }
+}
+sub DoList {
+    @SelectedDevices = map {$FoundDeviceIndexes{$_}}
+        sort {$a <=> $b} keys %FoundDeviceIndexes;
+    print "Found devices:\n", PrintDevices(), "\n";
+}
+sub DoLs {
+    for my $id (@SelectedDevices) {
+        print "======== $FoundDevices{$id}{desc}\n";
+        print"> @_\n";
+        my $cmd = join(' ', $ADB, '-s', $id, 'shell', @_, '2>&1', '|');
+        open(my $fh, $cmd) || die "open \"$cmd\" FAILED\n";
+        my @lines = <$fh>;
+        $fh->close();
+        map { s/[\r|\n].*//s; } @lines;
+        print join("\n", @lines, "\n");
+    }
+}
+sub DoPush {
+    my $subName = shift @_;
+    die $USAGE, "$subName: wrong number of arguments.\n" unless @_ == 2;
+    unless (-f $_[0]) {
+        die $USAGE, "push: device_file doesn't exist or isn't readable.\n";
+    }
+    for my $id (@SelectedDevices) {
+        my @cmd = ($ADB, '-s', $id, $subName, @_, '2>&1');
+        my $response = `@cmd`;
+        print $response, "\n";
+    }
+}
+sub DoPull {
+    die $USAGE, "pull: wrong number of arguments.\n" unless @_ == 2;
+    for my $id (@SelectedDevices) {
+        my $cmd = join(' ',$ADB, '-s', $id, @_, '2>&1', '|');
+        open(my $fh, $cmd) || die "open \"$cmd\" FAILED\n";
+        while (defined(my $line = <$fh>)) {
+            print $line;
+        }
+        $fh->close();
+    }
+}
+sub GetAPK {
+    for my $id (@SelectedDevices) {
+        print "======== $FoundDevices{$id}{desc}\n";
+        shift @_;
+        my @packages = GetInstalledAPK($id);
+        print "Found ", scalar @packages, " packages.\n";
+        if (@_) {
+            while (defined (my $regex = shift @_)) {
+                @packages = grep $_ =~ m{$regex}, @packages;
+                printf("%-2d lines matched regex \"%s\"\n"
+                    , scalar @packages, $regex);
+            }
+        }
+        print join ("\n", @packages, "\n");
+    }
+}
+sub InstallAPK {
+    my ($cmd, $apk_file) = @_;
+    die $USAGE, $CmdTable{$cmd}{help}, "Wrong arg count\n" unless @_ == 2;
+    die $USAGE, $CmdTable{$cmd}{help}
+        , "$apk_file NOT FOUND\n" unless -f $apk_file;
+    unless ($apk_file =~ /\.apk/
+            && (`/usr/bin/file $apk_file` =~ /\b(?:Jar|Zip)\b/)) {
+        die $USAGE, $CmdTable{$cmd}{help}
+            , "$apk_file doesn't look like an apk file.\n";
+    }
+    my $apk_name = ($apk_file =~ m{([^/]*.apk)$})[0];
+    my $badging = `$AAPT dump badging $apk_file`;
+    my ($package, $activity) = ($badging =~ m{
+            ^package:\s+name='([^']+)'
+            .*
+            ^launchable-activity:\s+name='([^']+)'
+        }msx
+    );
+    for my $id (@SelectedDevices) {
+        print "======== $FoundDevices{$id}{desc}\n";
+        my @install_cmd = ("$ADB", '-s', $id, 'install', $apk_file, '2>&1');
+        my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
+            , "$package/$activity", '2>&1');
+        my $result = `@install_cmd`;
+        if ($result =~ m{\bINSTALL_FAILED_ALREADY_EXISTS\b}) {
+            my $remove;
+            do {
+                print "Remove existing APK? (y/n)> ";
+                $remove = (uc(<STDIN>) =~ m{^([YN])$})[0];
+                unless(defined $remove) {
+                    print "Invalid input.  Please input 'y' or 'n'\n"
+                }
+            } until defined $remove;
+            if ($remove eq 'Y') {
+                $cmd = "$ADB -s $id shell pm uninstall $package 2>&1";
+                $result = `$cmd`;
+                unless($result =~ /Success/) {
+                    die "Uninstall FAILED: $result\n";
+                }
+                $result = `@install_cmd`;
+            }
+        }
+        if ($result =~ m{\bSuccess\b}) {
+            print `@start_cmd`, "\n";
+        }
+        else {
+            print STDERR $result;
+        }
+    }
+
+}
+
+sub YesNo {
+    my ($prompt) = @_;
+    my $in = "";
+    my $rv = "";
+    do {
+        print "$prompt (y/n) > ";
+        chomp($in = uc(<STDIN>));
+        if ($in =~ /^\s*([YN])\s*$/) {
+            $in = $1;
+            $rv = $in eq 'Y';
+        }
+        else {
+            print "Please enter y or n.\n";
+            $in = "";
+        }
+    } until ($in);
+    return $rv;
+}
+sub UninstallPackage {
+    my ($cmd, @packages) = @_;
+    die $USAGE, $CmdTable{$cmd}{help}, "Wrong arg count\n" unless @packages >= 1;
+    foreach my $package (@packages) {
+        print "Removing package $package\n";
+        for my $id (@SelectedDevices) {
+            printf("========== %d) %s\n",
+                $FoundDevices{$id}{index} + 1,
+                $FoundDevices{$id}{desc});
+            my @packages = map {/^.*=(.*)/} GetInstalledAPK($id);
+            my @rm_pkg = grep $_ =~ /$package/, @packages;
+            if (@rm_pkg == 0) {
+                print STDERR $CmdTable{$cmd}{help}
+                    , "\nNo package matching \"$package\" not found.\n";
+                next;
+            }
+            foreach my $pkg (@rm_pkg) {
+                if (YesNo("remove package $pkg")) {
+                    print `$ADB -s $id uninstall $pkg 2>&1`;
+                }
+                else {
+                    print "skipping $package...\n"
+                }
+            }
+        }
+    }
+}
+sub DoReset {
+    unless (@_ == 1 || (@_ == 2 && $_[1] eq '-s')) {
+        die $USAGE, "Reset: wrong arguments.\n";
+    }
+    # unless (getpwuid($<) eq 'root') {
+    #    my @exec = ('/usr/bin/sudo', $0, "ADB=$ADB", @ARGV);
+    #    exec @exec;
+    #}
+    # Reset the hub.  In this case: bus 004 device 002
+    # system('/usr/bin/sudo', '/root/usbreset', '/dev/bus/usb/004/002');
+    my @cmd0 = ((@_ == 2) ? ('/usr/bin/sudo', $ADB) : ($ADB));
+    system(@cmd0, 'kill-server');
+    system(@cmd0, 'start-server');
+    print "Looking for devices after reset.\n";
+    system($ADB, 'devices');
+}
+%FoundDevices = GetDevices();
+my @argv = @ARGV;
+if (@argv && $argv[0] eq 'all') {
+    my @args = 1..(scalar keys %FoundDevices);
+    @argv = (@args, @argv[1..$#argv]);
+}
+map {$_ = $FoundDeviceIndexes{$_}} grep exists $FoundDeviceIndexes{$_}, @argv;
+# Strip off devices until we find a non-device.
+{
+    my %x;
+    while (@argv && exists $FoundDevices{$argv[0]}) {
+        $x{$argv[0]}++;
+        shift @argv;
+    }
+    @SelectedDevices = keys %x;
+}
+unless (@SelectedDevices || grep $_ eq 'list', @argv) {
+    @SelectedDevices = map {$FoundDeviceIndexes{$_}}
+        sort {$a <=> $b} keys %FoundDeviceIndexes;
+    die $USAGE
+        , "No devices selected.  Found devices are:\n"
+        , PrintDevices()
+        , "\n";
+}
+if ($Verbose) {
+    my $rules = "/etc/udev/rules.d/51-android.rules";
+    # SUBSYSTEM=="usb", ATTR{idVendor}=="0502", MODE="0666", GROUP="plugdev" #Acer
+    open F, $rules;
+    my %from_rules = map {m{^.*=="([a-f0-9]{4})"[^#]+#\s*(.*)$}}
+        grep /^SUB/, <F>;
+    close F;
+    open F, "/etc/udev/rules.d/51-android.rules";
+    # Bus 003 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub
+    my %usb = map {m{^.* ([a-f0-9]{4}):}, 1} `/usr/bin/lsusb`;
+    # print "From lsub + $rules\n";
+    # for my $u (sort keys %usb) {
+    #     if (exists $from_rules{$u}) {
+    #         print "\t$u -> $from_rules{$u}\n";
+    #     }
+    # }
+    print "From adb devices:\n", map {"\t$_"} `$ADB devices`;
+}
+
+if (exists $CmdTable{$argv[0]}) {
+    &{$CmdTable{$argv[0]}{exec}}(@argv);
+}
+else {
+    die "Failed to find $argv[0] in CmdTable\n";
+}
+__END__
