@@ -225,11 +225,13 @@ sub InstallAPK {
     );
     for my $id (@SelectedDevices) {
         print "======== $FoundDevices{$id}{desc}\n";
-        my @install_cmd = ("$ADB", '-s', $id, 'install', $apk_file, '2>&1');
+        my @install_cmd = ("$ADB", '-s', $id, 'install', '-t', $apk_file, '2>&1');
         my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
             , "$package/$activity", '2>&1');
         my $result = `@install_cmd`;
-        if ($result =~ m{\bINSTALL_FAILED_ALREADY_EXISTS\b}) {
+        if ($result
+            =~ m{\b(INSTALL_FAILED_ALREADY_EXISTS|INSTALL_FAILED_TEST_ONLY)\b}) {
+            print "FAILED: $1\n";
             my $remove;
             do {
                 print "Remove existing APK? (y/n)> ";
@@ -239,7 +241,7 @@ sub InstallAPK {
                 }
             } until defined $remove;
             if ($remove eq 'Y') {
-                $cmd = "$ADB -s $id shell pm uninstall $package 2>&1";
+                $cmd = "$ADB -s $id uninstall $package 2>&1";
                 $result = `$cmd`;
                 unless($result =~ /Success/) {
                     die "Uninstall FAILED: $result\n";
