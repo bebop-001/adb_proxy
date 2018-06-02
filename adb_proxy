@@ -28,6 +28,9 @@ my %CmdTable = (
         , help => "<-s>   Reset ADB abd display detected devices.  If <-s> is set,\n"
             . "    reset is executed as root.  'Reset' means adb kill-server;\n"
             . "    adb start-server; adb devices." },
+    'restart'  => {exec => \&DoRestart
+        , help =>  'regex_for_package    '
+    },
     'shell'      => {exec => \&DoShell
         , help => 'device_file host_file    '
             . 'Execute a shell command on host.'},
@@ -258,7 +261,6 @@ sub InstallAPK {
     }
 
 }
-
 sub YesNo {
     my ($prompt) = @_;
     my $in = "";
@@ -319,6 +321,58 @@ sub DoReset {
     system(@cmd0, 'start-server');
     print "Looking for devices after reset.\n";
     system($ADB, 'devices');
+}
+sub DoRestart {
+    my ($cmd, $package_regex) = @_;
+    unless(@_ == 2) {
+        die $USAGE
+            , "DoRestart: wrong arg count.  Expected one got "
+            , scalar(@_) - 1;
+    }
+    for my $id (@SelectedDevices) {
+        print "======== "
+            , ($FoundDevices{$id}{index} + 1)
+            , " $FoundDevices{$id}{desc}\n";
+        my @packages = grep /$package_regex/, GetInstalledAPK($id);
+        if (@packages > 1) {
+            die "Found too many packages:\n"
+                , map {"\t$_\n"} @packages;
+        }
+        my ($APK, $package) = split /=/, $packages[0];
+        # DUMP OF SERVICE package:
+        #   Activity Resolver Table:
+        #     Non-Data Actions:
+        #         android.intent.action.MAIN:
+        #           4214f528 com.kana_tutor.kanjidic/.MainActivity filter 42c63c68
+        #     Action: "android.intent.action.MAIN"
+        #     Category: "android.intent.category.LAUNCHER"
+        my @sh = ($ADB, '-s', $id, 'shell');
+        my @cmd = (@sh, 'pm', 'dump', $package);
+        my @in = `@cmd 2>&1`;
+        my $state = 0;
+        my $intent;
+        foreach (@in) {
+            if ($state == 0 && /action\.MAIN:/) {
+                $state++;
+                next;
+            }
+            if ($state == 1 && /\s+[\d+a-f]+\s+($package\S+)/) {
+                $intent = $1;
+                last;
+            }
+        }
+
+        unless ($intent) {
+            die "Failed to find launcher activity.\n";
+        }
+        # stop the activity.
+        @cmd = (@sh, 'am', 'force-stop', $package);
+        print "Stopping...\n    <@cmd>\n";
+        system(@cmd);
+        @cmd = (@sh, 'am', 'start', '-n', "$intent");
+        print "Starting...\n    <@cmd>\n";
+        system(@cmd) && die "\"@cmd\" FAILED\n";
+    }
 }
 %FoundDevices = GetDevices();
 my @argv = @ARGV;
