@@ -11,11 +11,11 @@ my ($Exec, $Func) = (abs_path($0) =~ m{^(.*)/(.*)});
 my %CmdTable = (
     'install' => {exec => \&InstallAPK
         , help => "install package: Install and start the apk file passed in." },
-    'list' =>       {exec => \&DoList
+    'devices' =>       {exec => \&ListDevices
         , help => 'Print a list of found devices and exit.'},
     'ls' =>       {exec => \&DoLs
         , help => 'Execute the ls command on the target.'},
-    'packages' => {exec => \&GetAPK
+    'packages' => {exec => \&GetPackages
         , help => "packages <regex>  List packages found on the device."
             . "\n        Filter using <regex> if one is given."},
     'pull'      => {exec => \&DoPull
@@ -42,7 +42,8 @@ my %CmdTable = (
         , help => 'device_file host_file    '
             . 'Execute a shell command on host.'},
     'uninstall' => {exec => \&UninstallPackage
-        , help => "unistall package: remove the apk indicated by the package." },
+        , help => "unistall package: remove the apk indicated "
+            . "by the package regex passed in." },
 );
 my $USAGE = "USAGE of $Func:
     To run a function on one or more devices, run
@@ -129,22 +130,9 @@ sub GetInstalledAPK {
     my $device = shift @_;
     my @cmd = ($ADB, '-s', $device,
         qw(shell pm list packages -f));
-    chomp (my @packages = `@cmd`);
-    map {s/[\n\r]//g; s/package://;} @packages;
-    return @packages;
-}
-sub GetMatches {
-    my ($id, $desc, @regexes) = @_;
-    print "Fetching packages from\n$desc\n";
-    my @packages = GetInstalledAPK($id);
-    map {s/^package://;} @packages;
-    # map {s/^.*=//; }@packages;
-    print "Found ", scalar @packages, " packages.\n";
-    my @matches = ();
-    for my $regex (@regexes) {
-        push @matches, grep /$regex/, @packages;
-    }
-    return @matches;
+    chomp (my @p = `@cmd`);
+    my %packages = map{reverse m{^[^:]+:([^=]+)=([^\cM]+)}}  @p;
+    return %packages;
 }
 sub DoShell {
     for my $id (@SelectedDevices) {
@@ -159,7 +147,7 @@ sub DoShell {
         print join("\n", @lines, "\n");
     }
 }
-sub DoList {
+sub ListDevices {
     @SelectedDevices = map {$FoundDeviceIndexes{$_}}
         sort {$a <=> $b} keys %FoundDeviceIndexes;
     print "Found devices:\n", PrintDevices(), "\n";
@@ -199,20 +187,19 @@ sub DoPull {
         $fh->close();
     }
 }
-sub GetAPK {
+sub GetPackages {
     for my $id (@SelectedDevices) {
         print "======== $FoundDevices{$id}{desc}\n";
         shift @_;
-        my @packages = GetInstalledAPK($id);
-        print "Found ", scalar @packages, " packages.\n";
-        if (@_) {
-            while (defined (my $regex = shift @_)) {
-                @packages = grep $_ =~ m{$regex}, @packages;
-                printf("%-2d lines matched regex \"%s\"\n"
-                    , scalar @packages, $regex);
-            }
+        my %byPackage = GetInstalledAPK($id);
+        my $max = 0;
+        foreach (keys %byPackage) {
+            $max = length $_ if length $_ > $max;
         }
-        print join ("\n", @packages, "\n");
+        print "Found ", scalar keys %byPackage, " packages.\n";
+        print map {
+            sprintf("%-${max}s %s\n", $_, $byPackage{$_})
+        } sort keys %byPackage;
     }
 }
 sub InstallAPK {
@@ -235,16 +222,11 @@ sub InstallAPK {
     );
     for my $id (@SelectedDevices) {
         print "======== $FoundDevices{$id}{desc}\n";
-        my @install_cmd = ("$ADB", '-s', $id, 'install', '-t', $apk_file, '2>&1');
-        my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
-            , "$package/$activity", '2>&1');
-        my $result = `@install_cmd`;
-        if ($result
-            =~ m{\b(INSTALL_FAILED_ALREADY_EXISTS|INSTALL_FAILED_TEST_ONLY)\b}) {
-            print "FAILED: $1\n";
+        my %byPackage = GetInstalledAPK($id);
+        if (exists $byPackage{$package}) {
             my $remove;
             do {
-                print "Remove existing APK? (y/n)> ";
+                print "Remove existing APK? (y/n) > ";
                 $remove = (uc(<STDIN>) =~ m{^([YN])$})[0];
                 unless(defined $remove) {
                     print "Invalid input.  Please input 'y' or 'n'\n"
@@ -252,18 +234,22 @@ sub InstallAPK {
             } until defined $remove;
             if ($remove eq 'Y') {
                 $cmd = "$ADB -s $id uninstall $package 2>&1";
-                $result = `$cmd`;
+                my $result = `$cmd`;
                 unless($result =~ /Success/) {
                     die "Uninstall FAILED: $result\n";
                 }
-                $result = `@install_cmd`;
             }
         }
+        print "Installing $apk_file\n";
+        my @install_cmd = ("$ADB", '-s', $id, 'install', '-t', $apk_file, '2>&1');
+        my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
+            , "$package/$activity", '2>&1');
+        my $result = `@install_cmd`;
         if ($result =~ m{\bSuccess\b}) {
-            print `@start_cmd`, "\n";
+            system(@start_cmd);
         }
         else {
-            print STDERR $result;
+            print STDERR "Install FAILED:$result\n";
         }
     }
 
@@ -288,15 +274,16 @@ sub YesNo {
 }
 sub UninstallPackage {
     my ($cmd, @packages) = @_;
-    die $USAGE, $CmdTable{$cmd}{help}, "Wrong arg count\n" unless @packages >= 1;
+    die $USAGE, $CmdTable{$cmd}{help}
+        , "Wrong arg count\n" unless @packages >= 1;
     foreach my $package (@packages) {
         print "Removing package $package\n";
         for my $id (@SelectedDevices) {
+            my %byPackage = GetInstalledAPK($id);
             printf("========== %d) %s\n",
                 $FoundDevices{$id}{index} + 1,
                 $FoundDevices{$id}{desc});
-            my @packages = map {/^.*=(.*)/} GetInstalledAPK($id);
-            my @rm_pkg = grep $_ =~ /$package/, @packages;
+            my @rm_pkg = grep $_ =~ /$package/, keys %byPackage;
             if (@rm_pkg == 0) {
                 print STDERR $CmdTable{$cmd}{help}
                     , "\nNo package matching \"$package\" not found.\n";
@@ -331,7 +318,8 @@ sub DoReset {
 }
 sub getPackageAndIntent {
     my ($id, $regex) = @_;
-    my @packages = grep /$regex/, GetInstalledAPK($id);
+    my %byPackage = GetInstalledAPK($id);
+    my @packages = grep /$regex/, keys %byPackage;
     if (@packages == 0) {
         die "No packages found to match \"$regex\"\n";
     }
@@ -339,10 +327,8 @@ sub getPackageAndIntent {
         die "Found too many packages:\n"
             , map {"\t$_\n"} @packages;
     }
-    my ($APK, $package) = split /=/, $packages[0];
-    unless ($APK && $package) {
-        die "Failed to find APK or package.";
-    }
+    my $package = $packages[0];
+    my $APK = $byPackage{$package};
     # DUMP OF SERVICE package:
     #   Activity Resolver Table:
     #     Non-Data Actions:
@@ -430,7 +416,7 @@ map {$_ = $FoundDeviceIndexes{$_}} grep exists $FoundDeviceIndexes{$_}, @argv;
     }
     @SelectedDevices = keys %x;
 }
-unless (@SelectedDevices || grep $_ eq 'list', @argv) {
+unless (@SelectedDevices || grep $_ eq 'devices', @argv) {
     @SelectedDevices = map {$FoundDeviceIndexes{$_}}
         sort {$a <=> $b} keys %FoundDeviceIndexes;
     die $USAGE
