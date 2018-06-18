@@ -10,7 +10,7 @@ my ($Exec, $Func) = (abs_path($0) =~ m{^(.*)/(.*)});
 
 my %CmdTable = (
     'install' => {exec => \&InstallAPK
-        , help => "install package: Install and start the apk file passed in." },
+        , help => "install package: Install and start the apk files passed in." },
     'devices' =>       {exec => \&ListDevices
         , help => 'Print a list of found devices and exit.'},
     'ls' =>       {exec => \&DoLs
@@ -203,56 +203,53 @@ sub GetPackages {
     }
 }
 sub InstallAPK {
-    my ($cmd, $apk_file) = @_;
-    die $USAGE, $CmdTable{$cmd}{help}, "Wrong arg count\n" unless @_ == 2;
-    die $USAGE, $CmdTable{$cmd}{help}
-        , "$apk_file NOT FOUND\n" unless -f $apk_file;
-    unless ($apk_file =~ /\.apk/
-            && (`/usr/bin/file $apk_file` =~ /\b(?:Jar|Zip)\b/)) {
+    my ($cmd, @apk_files) = @_;
+    die $USAGE, $CmdTable{$cmd}{help}, "Wrong arg count\n" unless @_ >= 2;
+    foreach my $apk (@apk_files) {
         die $USAGE, $CmdTable{$cmd}{help}
-            , "$apk_file doesn't look like an apk file.\n";
+            , "$apk NOT FOUND\n" unless -f $apk;
     }
-    my $apk_name = ($apk_file =~ m{([^/]*.apk)$})[0];
-    my $badging = `$AAPT dump badging $apk_file`;
-    my ($package, $activity) = ($badging =~ m{
-            ^package:\s+name='([^']+)'
-            .*
-            ^launchable-activity:\s+name='([^']+)'
-        }msx
-    );
-    for my $id (@SelectedDevices) {
-        print "======== $FoundDevices{$id}{desc}\n";
-        my %byPackage = GetInstalledAPK($id);
-        if (exists $byPackage{$package}) {
-            my $remove;
-            do {
-                print "Remove existing APK? (y/n) > ";
-                $remove = (uc(<STDIN>) =~ m{^([YN])$})[0];
-                unless(defined $remove) {
-                    print "Invalid input.  Please input 'y' or 'n'\n"
-                }
-            } until defined $remove;
-            if ($remove eq 'Y') {
+
+    foreach my $apk (@apk_files) {
+        unless ($apk =~ /\.apk/
+                && (`/usr/bin/file $apk` =~ /\b(?:Jar|Zip)\b/)) {
+            die $USAGE, $CmdTable{$cmd}{help}
+                , "$apk doesn't look like an apk file.\n";
+        }
+        my $apk_name = ($apk =~ m{([^/]*.apk)$})[0];
+        my $badging = `$AAPT dump badging $apk`;
+        my ($package, $activity) = ($badging =~ m{
+                ^package:\s+name='([^']+)'
+                .*
+                ^launchable-activity:\s+name='([^']+)'
+            }msx
+        );
+        for my $id (@SelectedDevices) {
+            print "======== $FoundDevices{$id}{desc}\n";
+            my %byPackage = GetInstalledAPK($id);
+            my $apk_base = ($apk =~ m{^.*/(.*)$})[0];
+            if (exists $byPackage{$package}) {
+                print "Uninstalling $apk_base\n"; 
                 $cmd = "$ADB -s $id uninstall $package 2>&1";
                 my $result = `$cmd`;
                 unless($result =~ /Success/) {
                     die "Uninstall FAILED: $result\n";
                 }
             }
-        }
-        print "Installing $apk_file\n";
-        my @install_cmd = ("$ADB", '-s', $id, 'install', '-t', $apk_file, '2>&1');
-        my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
-            , "$package/$activity", '2>&1');
-        my $result = `@install_cmd`;
-        if ($result =~ m{\bSuccess\b}) {
-            system(@start_cmd);
-        }
-        else {
-            print STDERR "Install FAILED:$result\n";
+            print "Installing $apk_base\n";
+            my @install_cmd = ("$ADB", '-s', $id, 'install', '-t', $apk, '2>&1');
+            print "Starting $apk_base\n";
+            my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
+                , "$package/$activity", '2>&1');
+            my $result = `@install_cmd`;
+            if ($result =~ m{\bSuccess\b}) {
+                system(@start_cmd);
+            }
+            else {
+                print STDERR "Install FAILED:$result\n";
+            }
         }
     }
-
 }
 sub YesNo {
     my ($prompt) = @_;
