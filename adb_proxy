@@ -10,40 +10,43 @@ my ($Exec, $Func) = (abs_path($0) =~ m{^(.*)/(.*)});
 
 my %CmdTable = (
     'install' => {exec => \&InstallAPK
-        , help => "install package: Install and start the apk files passed in." },
-    'devices' =>       {exec => \&ListDevices
-        , help => 'Print a list of found devices and exit.'},
+        , help => "install package: Install t the apk files passed in.\n"
+            . "        If the first arg is '-s', start the apk.  NOTE! if more\n"
+            . "        than one apk file is passed in, only the last is started.\n"},
+    'start' => {exec => \&StartAPK
+        , help => "Start the app associated with the apk file passed in.\n"
+            . "        If the first arg is '-s', start the apk.\n"},
     'ls' =>       {exec => \&DoLs
-        , help => 'Execute the ls command on the target.'},
+        , help => "Execute the ls command on the target.\n"},
     'packages' => {exec => \&GetPackages
-        , help => "packages <regex>  List packages found on the device."
-            . "\n        Filter using <regex> if one is given."},
+        , help => "packages <regex>  List packages found on the device.\n"
+            . "        Filter using <regex> if one is given.\n"},
     'pull'      => {exec => \&DoPull
-        , help => 'device_file host_file    '
-            . 'Read device_file from the device to host_file.'},
+        , help => "device_file host_file\n"
+            . "        Read device_file from the device to host_file.\n"},
     'push'      => {exec => \&DoPush
-        , help =>  'host_file device_file    '
-            . 'host_file device_file    Copy the host_file to the device_file.'},
+        , help =>  "host_file device_file\n"
+            . "        host_file device_file    Copy the host_file to the device_file.\n"},
     'reset'    => {exec => \&DoReset
         , help => "<-s>   Reset ADB abd display detected devices.  If <-s> is set,\n"
-            . "    reset is executed as root.  'Reset' means adb kill-server;\n"
-            . "    adb start-server; adb devices." },
+            . "        reset is executed as root.  'Reset' means adb kill-server;\n"
+            . "        adb start-server; adb devices." },
     'restart'  => {exec => \&DoRestart
         , help =>  "regex_for_package\n"
-            . "Stop and then restart the app based on the package selected\n"
-            . "by the regex."
+            . "        Stop and then restart the app based on the package selected\n"
+            . "        by the regex.\n"
     },
     'stop'  => {exec => \&DoStop
         , help =>  "regex_for_package\n"
-            . "Stop and the app based on the package selected\n"
-            . "by the regex."
+            . "        Stop and the app based on the package selected\n"
+            . "        by the regex.\n"
     },
     'shell'      => {exec => \&DoShell
-        , help => 'device_file host_file    '
-            . 'Execute a shell command on host.'},
+        , help => "device_file host_file\n"
+            . "        Execute a shell command on host.\n"},
     'uninstall' => {exec => \&UninstallPackage
-        , help => "unistall package: remove the apk indicated "
-            . "by the package regex passed in." },
+        , help => "unistall package: remove the apk indicated\n"
+            . "        by the package regex passed in." },
 );
 my $USAGE = "USAGE of $Func:
     To run a function on one or more devices, run
@@ -147,11 +150,6 @@ sub DoShell {
         print join("\n", @lines, "\n");
     }
 }
-sub ListDevices {
-    @SelectedDevices = map {$FoundDeviceIndexes{$_}}
-        sort {$a <=> $b} keys %FoundDeviceIndexes;
-    print "Found devices:\n", PrintDevices(), "\n";
-}
 sub DoLs {
     for my $id (@SelectedDevices) {
         print "======== $FoundDevices{$id}{desc}\n";
@@ -202,12 +200,52 @@ sub GetPackages {
         } sort keys %byPackage;
     }
 }
-sub InstallAPK {
-    my ($cmd, @apk_files) = @_;
-    die $USAGE, $CmdTable{$cmd}{help}, "Wrong arg count\n" unless @_ >= 2;
-    foreach my $apk (@apk_files) {
+sub StartAPK {
+    my ($cmd, $apk) = @_;
+    die $CmdTable{$cmd}{help}, "\"@_\", Wrong arg count\n" unless @_ == 2;
+    unless ($apk =~ /\.apk/
+            && (`/usr/bin/file $apk` =~ /\b(?:Jar|Zip)\b/)) {
         die $USAGE, $CmdTable{$cmd}{help}
-            , "$apk NOT FOUND\n" unless -f $apk;
+            , "$apk doesn't look like an apk file.\n";
+    }
+    my $apk_name = ($apk =~ m{([^/]*.apk)$})[0];
+    my $apk_base = ($apk =~ m{^.*/(.*)$})[0];
+    my $badging = `$AAPT dump badging $apk`;
+    my ($package, $activity) = ($badging =~ m{
+            ^package:\s+name='([^']+)'
+            .*
+            ^launchable-activity:\s+name='([^']+)'
+        }msx
+    );
+    for my $id (@SelectedDevices) {
+        print "======== $FoundDevices{$id}{desc}\n";
+        my %byPackage = GetInstalledAPK($id);
+        my $apk_base = ($apk =~ m{^.*/(.*)$})[0];
+        print "Starting $apk_base\n";
+        my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
+            , "$package/$activity", '2>&1');
+        my $result = `@start_cmd`;
+        if ($result =~ m{\bSuccess\b}) {
+            print "Success...\n";
+        }
+        elsif ($result =~ /task has been brought to the front/) {
+            print "Current task was running and brought to front.\n";
+        }
+        else {
+            die "\"@start_cmd\" FAILED\n";
+        }
+    }
+}
+sub InstallAPK {
+    my ($cmd) = shift @_;
+    my $startAPK = (@_ && $_[0] eq '-s') ? shift @_ : "";
+    my @apk_files = @_;
+
+    die $CmdTable{$cmd}{help}, "Wrong arg count\n" unless @apk_files;
+    if (my @bad = grep !-f, @apk_files) {
+        die $USAGE, $CmdTable{$cmd}{help}
+            , "APK files not found:\n\t",
+            join("\n\t", @bad), "\n";
     }
 
     foreach my $apk (@apk_files) {
@@ -238,15 +276,15 @@ sub InstallAPK {
             }
             print "Installing $apk_base\n";
             my @install_cmd = ("$ADB", '-s', $id, 'install', '-t', $apk, '2>&1');
-            print "Starting $apk_base\n";
-            my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
-                , "$package/$activity", '2>&1');
             my $result = `@install_cmd`;
-            if ($result =~ m{\bSuccess\b}) {
-                system(@start_cmd);
+            if($result =~ /Success/) {
+                print "Install succeeded.\n";
             }
             else {
-                print STDERR "Install FAILED:$result\n";
+                die "Install FAILED: $result\n";
+            }
+            if ($apk eq $apk_files[$#apk_files] && $startAPK) {
+                StartAPK('start', $apk);
             }
         }
     }
@@ -399,6 +437,17 @@ sub DoStop {
 }
 %FoundDevices = GetDevices();
 my @argv = @ARGV;
+# No input, print found devices.
+unless (@argv) {
+    unless (keys %FoundDevices) {
+        die $USAGE, "No devices found.\n";
+    }
+    @SelectedDevices = map {$FoundDeviceIndexes{$_}}
+        sort {$a <=> $b} keys %FoundDeviceIndexes;
+    die "Found devices are:\n"
+        , PrintDevices()
+        , "\n";
+}
 if (@argv && $argv[0] eq 'all') {
     my @args = 1..(scalar keys %FoundDevices);
     @argv = (@args, @argv[1..$#argv]);
@@ -413,7 +462,10 @@ map {$_ = $FoundDeviceIndexes{$_}} grep exists $FoundDeviceIndexes{$_}, @argv;
     }
     @SelectedDevices = keys %x;
 }
-unless (@SelectedDevices || grep $_ eq 'devices', @argv) {
+unless (exists $CmdTable{$argv[0]}) {
+    die $USAGE, "Failed to find command \"$argv[0]\" in CmdTable\n";
+}
+unless (@SelectedDevices) {
     @SelectedDevices = map {$FoundDeviceIndexes{$_}}
         sort {$a <=> $b} keys %FoundDeviceIndexes;
     die $USAGE
@@ -440,10 +492,5 @@ if ($Verbose) {
     print "From adb devices:\n", map {"\t$_"} `$ADB devices`;
 }
 
-if (exists $CmdTable{$argv[0]}) {
-    &{$CmdTable{$argv[0]}{exec}}(@argv);
-}
-else {
-    die "Failed to find $argv[0] in CmdTable\n";
-}
+&{$CmdTable{$argv[0]}{exec}}(@argv);
 __END__
