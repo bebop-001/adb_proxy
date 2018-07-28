@@ -218,7 +218,9 @@ sub StartAPK {
         }msx
     );
     for my $id (@SelectedDevices) {
-        print "======== $FoundDevices{$id}{desc}\n";
+        printf("========== %d) %s\n",
+            $FoundDevices{$id}{index} + 1,
+            $FoundDevices{$id}{desc});
         my %byPackage = GetInstalledAPK($id);
         my $apk_base = ($apk =~ m{^.*/(.*)$})[0];
         print "Starting $apk_base\n";
@@ -247,23 +249,24 @@ sub InstallAPK {
             , "APK files not found:\n\t",
             join("\n\t", @bad), "\n";
     }
-
-    foreach my $apk (@apk_files) {
-        unless ($apk =~ /\.apk/
-                && (`/usr/bin/file $apk` =~ /\b(?:Jar|Zip)\b/)) {
-            die $USAGE, $CmdTable{$cmd}{help}
-                , "$apk doesn't look like an apk file.\n";
-        }
-        my $apk_name = ($apk =~ m{([^/]*.apk)$})[0];
-        my $badging = `$AAPT dump badging $apk`;
-        my ($package, $activity) = ($badging =~ m{
-                ^package:\s+name='([^']+)'
-                .*
-                ^launchable-activity:\s+name='([^']+)'
-            }msx
-        );
-        for my $id (@SelectedDevices) {
-            print "======== $FoundDevices{$id}{desc}\n";
+    for my $id (@SelectedDevices) {
+        printf("========== %d) %s\n",
+            $FoundDevices{$id}{index} + 1,
+            $FoundDevices{$id}{desc});
+        foreach my $apk (@apk_files) {
+            unless ($apk =~ /\.apk/
+                    && (`/usr/bin/file $apk` =~ /\b(?:Jar|Zip)\b/)) {
+                die $USAGE, $CmdTable{$cmd}{help}
+                    , "$apk doesn't look like an apk file.\n";
+            }
+            my $apk_name = ($apk =~ m{([^/]*.apk)$})[0];
+            my $badging = `$AAPT dump badging $apk`;
+            my ($package, $activity) = ($badging =~ m{
+                    ^package:\s+name='([^']+)'
+                    .*
+                    ^launchable-activity:\s+name='([^']+)'
+                }msx
+            );
             my %byPackage = GetInstalledAPK($id);
             my $apk_base = ($apk =~ m{^.*/(.*)$})[0];
             if (exists $byPackage{$package}) {
