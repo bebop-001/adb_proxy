@@ -137,6 +137,17 @@ sub GetInstalledAPK {
     my %packages = map{reverse m{^[^:]+:([^=]+)=([^\cM]+)}}  @p;
     return %packages;
 }
+sub GetInstalledAPK_by_regex {
+    my ($device, $regex) = @_;
+    my %packages = ();
+    my %installed = GetInstalledAPK($device);
+    while (my($key, $val) = each %installed) {
+        if ("$key\n$val" =~ m{$regex}m) {
+            $packages{$key} = $val;
+        } 
+    }
+    return %packages;
+}
 sub DoShell {
     for my $id (@SelectedDevices) {
         print "======== $FoundDevices{$id}{desc}\n";
@@ -185,19 +196,45 @@ sub DoPull {
         $fh->close();
     }
 }
+sub PrintPackages {
+    my ($prompt, $packageInfoRef) = @_;
+    my $max = 0;
+    foreach (keys %$packageInfoRef) {
+        $max = length $_ if length $_ > $max;
+    }
+    print $prompt, "\n";
+    my $i = 1;
+    while (my ($key, $val) = each %{$packageInfoRef}) {
+        printf("%3d) %-${max}s %s\n", $i++, $key, $val)
+    }
+}
 sub GetPackages {
     for my $id (@SelectedDevices) {
         print "======== $FoundDevices{$id}{desc}\n";
-        shift @_;
-        my %byPackage = GetInstalledAPK($id);
-        my $max = 0;
-        foreach (keys %byPackage) {
-            $max = length $_ if length $_ > $max;
+        my ($cmd, $regex) = @_;
+        my %byPackage = (defined $regex)
+            ? GetInstalledAPK_by_regex ($id, $regex)
+            : GetInstalledAPK($id);
+        my $max;
+        if (defined $regex) {
+            if (%byPackage) {
+                PrintPackages(
+                    join(' ', "For regex \"$regex\" found "
+                        , scalar keys %byPackage, " packages."),
+                    \%byPackage);
+            }
+            else {
+                %byPackage =  GetInstalledAPK($id);
+                PrintPackages(
+                    "For regex \"$regex\" found no matches in:",
+                    \%byPackage);
+            }
         }
-        print "Found ", scalar keys %byPackage, " packages.\n";
-        print map {
-            sprintf("%-${max}s %s\n", $_, $byPackage{$_})
-        } sort keys %byPackage;
+        else {
+            PrintPackages(
+                join(' ', "Found ", scalar keys %byPackage, " packages."),
+                \%byPackage);
+        }
     }
 }
 sub StartAPK {
