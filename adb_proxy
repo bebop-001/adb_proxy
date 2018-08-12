@@ -394,6 +394,7 @@ sub DoReset {
     print "Looking for devices after reset.\n";
     system($ADB, 'devices');
 }
+# use dumpsys to catch permissions on a device/package basis.
 sub pmDumpSys {
     my  ($id, $package) = @_;
     my @cmd = ($ADB, '-s' , $id , 'shell'
@@ -401,6 +402,9 @@ sub pmDumpSys {
     open(my $pm, '-|', @cmd) || die "open \"@cmd\" FAILED: $!\n";
     my @result = map {s{\cM.*\n}{}; s{^\s+}{}; $_;} <$pm>;
     close $pm;
+    # lines starting a permission end with [Pp]ermissions:.
+    # All lines from the first stating a permission until the 
+    # last line of dumpsys output contain permission info.
     my %permissions = ();
     my $currentPermission;
     foreach (@result) {
@@ -419,6 +423,7 @@ sub pmDumpSys {
 sub grantedPermissions {
     my ($cmd, $regex) = @_;
     die "$cmd: No package given.\n" unless defined $regex;
+    # sort id's by their index to make output pretty.
     my @ids = sort{$FoundDevices{$a}{index} <=> $FoundDevices{$b}{index}}
         @SelectedDevices;
     for my $id (@ids) {
@@ -434,6 +439,10 @@ sub grantedPermissions {
         }
         foreach my $package (@packages) {
             print "    Package: $package\n";
+            # permissions are returned as a hash => array ref.
+            # keys are the permission name and the ref contains
+            # the permissions granted.  Note that a permission
+            # may actually have no instances granted.
             my %permissions = pmDumpSys($id, $package);
             if (%permissions) {
                 for my $key (sort keys %permissions) {
