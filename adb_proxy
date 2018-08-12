@@ -21,6 +21,9 @@ my %CmdTable = (
     'packages' => {exec => \&GetPackages
         , help => "packages <regex>  List packages found on the device.\n"
             . "        Filter using <regex> if one is given.\n"},
+    'permissions' => {exec => \&grantedPermissions
+        , help => "grantedPermissions <regex>  List granged permissions\n"
+            . "associated with packages that match the regex.\n"},
     'pull'      => {exec => \&DoPull
         , help => "device_file host_file\n"
             . "        Read device_file from the device to host_file.\n"},
@@ -390,6 +393,65 @@ sub DoReset {
     system(@cmd0, 'start-server');
     print "Looking for devices after reset.\n";
     system($ADB, 'devices');
+}
+sub pmDumpSys {
+    my  ($id, $package) = @_;
+    my @cmd = ($ADB, '-s' , $id , 'shell'
+        , '/system/bin/dumpsys', 'package', $package);
+    open(my $pm, '-|', @cmd) || die "open \"@cmd\" FAILED: $!\n";
+    my @result = map {s{\cM.*\n}{}; s{^\s+}{}; $_;} <$pm>;
+    close $pm;
+    my %permissions = ();
+    my $currentPermission;
+    foreach (@result) {
+        if (/(\w+\s*[Pp]ermissions):$/ || $currentPermission) {
+            if (!defined $currentPermission || $currentPermission ne $1) {
+                $currentPermission = $1;
+                $permissions{$currentPermission} = [];
+            }
+            else {
+                push @{$permissions{$currentPermission}}, $_;
+            }
+        }
+    }
+    return %permissions;
+}
+sub grantedPermissions {
+    my ($cmd, $regex) = @_;
+    die "$cmd: No package given.\n" unless defined $regex;
+    my @ids = sort{$FoundDevices{$a}{index} <=> $FoundDevices{$b}{index}}
+        @SelectedDevices;
+    for my $id (@ids) {
+        printf("========== %d) %s\n",
+            $FoundDevices{$id}{index} + 1,
+            $FoundDevices{$id}{desc});
+        my @packages = do {
+            my %x = GetInstalledAPK_by_regex($id, $regex);
+            keys %x;
+        };
+        if (!@packages) {
+            die "No packages match regex $regex\n";
+        }
+        foreach my $package (@packages) {
+            print "    Package: $package\n";
+            my %permissions = pmDumpSys($id, $package);
+            if (%permissions) {
+                for my $key (sort keys %permissions) {
+                    my @perms = @{$permissions{$key}};
+                    print "        $key\n";
+                    if (@perms) {
+                        print map {"            $_\n"} @perms;
+                    }
+                    else {
+                        print "            NONE\n";
+                    }
+                }
+            }
+            else {
+                print "        NONE\n";
+            }
+        }
+    }
 }
 sub getPackageAndIntent {
     my ($id, $regex) = @_;
