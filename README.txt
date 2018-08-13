@@ -14,10 +14,10 @@ USAGE of adb_proxy:
     packages  : packages <regex>  List packages found on the device.
         Filter using <regex> if one is given.
 
-    permissions: grantedPermissions <regex> [revoke|grant a]
-        if neither grant or revoke are given, list granted
-        permissions. if grant or revoke is requested and 'a'
-        is requested, grant/revoke all privelages.  if 'a' is not
+    permissions : permissions <regex> [revoke|grant a]
+        If neither grant or revoke are given, list granted
+        permissions. If grant or revoke is requested and 'a'
+        is requested, grant/revoke all privelages.  If 'a' is not
         set, allow user to select privalage to grant/revoke.
         The regex allows the user to select the package to operate
         on.
