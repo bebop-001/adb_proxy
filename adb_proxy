@@ -21,9 +21,14 @@ my %CmdTable = (
     'packages' => {exec => \&GetPackages
         , help => "packages <regex>  List packages found on the device.\n"
             . "        Filter using <regex> if one is given.\n"},
-    'permissions' => {exec => \&grantedPermissions
-        , help => "grantedPermissions <regex>  List granged permissions\n"
-            . "associated with packages that match the regex.\n"},
+    'permissions' => {exec => \&permissions
+        , help => "grantedPermissions <regex> [revoke|grant a]\n"
+            . "        if neither grant or revoke are given, list granted\n"
+            . "        permissions. if grant or revoke is requested and 'a'\n"
+            . "        is requested, grant/revoke all privelages.  if 'a' is not\n"
+            . "        set, allow user to select privalage to grant/revoke.\n"
+            . "        The regex allows the user to select the package to operate\n"
+            . "        on.\n"},
     'pull'      => {exec => \&DoPull
         , help => "device_file host_file\n"
             . "        Read device_file from the device to host_file.\n"},
@@ -420,22 +425,41 @@ sub pmDumpSys {
     }
     return %permissions;
 }
-sub grantedPermissions {
-    my ($cmd, $regex) = @_;
+sub permissions {
+    my $cmd     = shift @_;
+    my $regex   = shift @_;
+    my $operation = (defined $_[0])
+                        ? ($_[0] =~ /^grant|revoke$/)
+                            ? shift @_
+                            : die "$cmd: unrecognized arg: $_[0]\n"
+                        : 'list';
+    my $range = (defined $_[0])
+                        ? ($_[0] eq 'a')
+                            ? 'all'
+                            : die "$cmd: unrecognized arg: $_[0]\n"
+                        : '';
     die "$cmd: No package given.\n" unless defined $regex;
-    # sort id's by their index to make output pretty.
-    my @ids = sort{$FoundDevices{$a}{index} <=> $FoundDevices{$b}{index}}
-        @SelectedDevices;
-    for my $id (@ids) {
+    # Can't revoke/grant these.
+    my %exclude = qw (
+        com.android.launcher.permission.INSTALL_SHORTCUT    1
+        android.permission-group.STORAGE                    1
+    );
+    for my $id (@SelectedDevices) {
         printf("========== %d) %s\n",
             $FoundDevices{$id}{index} + 1,
             $FoundDevices{$id}{desc});
+        my $sdkVersion = $FoundDevices{$id}{'version.sdk'};
+        if (($operation eq 'revoke' || $operation eq 'grant') && $sdkVersion < 23) {
+            print "        Can't revoke/deny permission on "
+                . "pre Android M/sdk version < 23.\n";
+            next;
+        }
         my @packages = do {
             my %x = GetInstalledAPK_by_regex($id, $regex);
             keys %x;
         };
         if (!@packages) {
-            die "No packages match regex $regex\n";
+            die "$cmd: No packages match regex $regex\n";
         }
         foreach my $package (@packages) {
             print "    Package: $package\n";
@@ -444,20 +468,80 @@ sub grantedPermissions {
             # the permissions granted.  Note that a permission
             # may actually have no instances granted.
             my %permissions = pmDumpSys($id, $package);
-            if (%permissions) {
-                for my $key (sort keys %permissions) {
-                    my @perms = @{$permissions{$key}};
-                    print "        $key\n";
-                    if (@perms) {
-                        print map {"            $_\n"} @perms;
+            my %granted = (exists $permissions{'requested permissions'})
+                ? map{$_, 1} grep(s/:\s+granted=true// && !$exclude{$_}
+                    , @{$permissions{'runtime permissions'}})
+                : ();
+            my %requested = (exists $permissions{'requested permissions'})
+                ? map {$_, 1}
+                    grep(!$exclude{$_},@{$permissions{'requested permissions'}})
+                : ();
+            if ($operation eq 'list') {
+                if (%permissions) {
+                    for my $key (sort keys %permissions) {
+                        my @perms = @{$permissions{$key}};
+                        print "        $key\n";
+                        if (@perms) {
+                            print map {"            $_\n"} @perms;
+                        }
+                        else {
+                            print "            NONE\n";
+                        }
                     }
-                    else {
-                        print "            NONE\n";
+                }
+                else {
+                    print "        NONE\n";
+                }
+            }
+            elsif ($operation eq 'revoke') {
+                if (%granted) {
+                    foreach my $perm (keys %granted) {
+                        print "    Revoke $perm...\n";
+                        if ($range eq 'all' || YesNo("Revoke $perm")) {
+                            my @cmd = ($ADB, '-s', $id, 'shell',
+                                '/system/bin/pm', 'revoke', $package, $perm,
+                                '2>&1');
+                            open (my $op, '-|', @cmd)
+                                || die ("$cmd: @cmd FAILED:$!\n");
+                            my @result = <$op>;
+                            if ($?) {
+                                die "@cmd FAILED:$!\n@result\n";
+                            }
+                            close $op;
+                        }
                     }
+                }
+                else {
+                    print "Revoke permissions for $package: NONE\n";
+                }
+            }
+            elsif ($operation eq 'grant') {
+                if (%requested) {
+                    foreach my $perm (keys %requested) {
+                        if (defined $granted{$perm}) {
+                            print "    $perm already granted.\n";
+                        }
+                        elsif ($range eq 'all' || YesNo("grant $perm")) {
+                            print "    Grant $perm...\n";
+                            my @cmd = ($ADB, '-s', $id, 'shell',
+                                '/system/bin/pm', 'grant', $package, $perm,
+                                '2>&1');
+                            open (my $op, '-|', @cmd)
+                                || die ("$cmd: @cmd FAILED:$!\n");
+                            my @result = map {s/\cM\cJ$//; $_} <$op>;
+                            close $op;
+                            if (@result) {
+                                print STDERR "Possible error:\n$result[0]\n\n";
+                            }
+                        }
+                    }
+                }
+                else {
+                    print "Requested permissions for $package: NONE\n";
                 }
             }
             else {
-                print "        NONE\n";
+                die "$cmd: unrecognized operation: $operation\n";
             }
         }
     }
@@ -571,7 +655,10 @@ map {$_ = $FoundDeviceIndexes{$_}} grep exists $FoundDeviceIndexes{$_}, @argv;
         $x{$argv[0]}++;
         shift @argv;
     }
-    @SelectedDevices = keys %x;
+    # sort id's by their index to make output pretty.
+    @SelectedDevices
+        = sort{$FoundDevices{$a}{index} <=> $FoundDevices{$b}{index}}
+            keys %x;
 }
 unless (exists $CmdTable{$argv[0]}) {
     die $USAGE, "Failed to find command \"$argv[0]\" in CmdTable\n";
