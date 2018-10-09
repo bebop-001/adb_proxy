@@ -142,7 +142,7 @@ sub GetInstalledAPK {
     my @cmd = ($ADB, '-s', $device,
         qw(shell pm list packages -f));
     chomp (my @p = `@cmd`);
-    my %packages = map{reverse m{^[^:]+:([^=]+)=([^\cM]+)}}  @p;
+    my %packages = map {reverse m{^[^:]+:([^=]+).*=([^=]+)$}} @p;
     return %packages;
 }
 sub GetInstalledAPK_by_regex {
@@ -232,10 +232,7 @@ sub GetPackages {
                     \%byPackage);
             }
             else {
-                %byPackage =  GetInstalledAPK($id);
-                PrintPackages(
-                    "For regex \"$regex\" found no matches in:",
-                    \%byPackage);
+                print "No packages found to match regex \"$regex\"\n";
             }
         }
         else {
@@ -300,7 +297,7 @@ sub InstallAPK {
             $FoundDevices{$id}{desc});
         foreach my $apk (@apk_files) {
             unless ($apk =~ /\.apk/
-                    && (`/usr/bin/file $apk` =~ /\b(?:Jar|Zip)\b/)) {
+                    && (`/usr/bin/file $apk` =~ /\b(?:Jar|Zip)\b/i)) {
                 die $USAGE, $CmdTable{$cmd}{help}
                     , "$apk doesn't look like an apk file.\n";
             }
@@ -373,7 +370,7 @@ sub UninstallPackage {
                 next;
             }
             foreach my $pkg (@rm_pkg) {
-                if (YesNo("remove package $pkg")) {
+                if (YesNo("remove package \"$pkg\"")) {
                     print `$ADB -s $id uninstall $pkg 2>&1`;
                 }
                 else {
@@ -469,7 +466,7 @@ sub permissions {
             # may actually have no instances granted.
             my %permissions = pmDumpSys($id, $package);
             my %granted = (exists $permissions{'requested permissions'})
-                ? map{$_, 1} grep(s/:\s+granted=true// && !$exclude{$_}
+                ? map{$_, 1} grep(/:\s+granted=true/ && !$exclude{$_}
                     , @{$permissions{'runtime permissions'}})
                 : ();
             my %requested = (exists $permissions{'requested permissions'})
@@ -496,6 +493,7 @@ sub permissions {
             elsif ($operation eq 'revoke') {
                 if (%granted) {
                     foreach my $perm (keys %granted) {
+                        $perm =~ s/:.*//;
                         print "    Revoke $perm...\n";
                         if ($range eq 'all' || YesNo("Revoke $perm")) {
                             my @cmd = ($ADB, '-s', $id, 'shell',
