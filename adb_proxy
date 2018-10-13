@@ -141,7 +141,8 @@ sub GetInstalledAPK {
     my $device = shift @_;
     my @cmd = ($ADB, '-s', $device,
         qw(shell pm list packages -f));
-    chomp (my @p = `@cmd`);
+    my @p = `@cmd`;
+    map {s/[\n\r]*$//} @p; # for some reason, chomp wasn't working.
     my %packages = map {reverse m{^[^:]+:([^=]+).*=([^=]+)$}} @p;
     return %packages;
 }
@@ -226,10 +227,7 @@ sub GetPackages {
         my $max;
         if (defined $regex) {
             if (%byPackage) {
-                PrintPackages(
-                    join(' ', "For regex \"$regex\" found "
-                        , scalar keys %byPackage, " packages."),
-                    \%byPackage);
+                PrintPackages("Regex \"$regex\":", \%byPackage);
             }
             else {
                 print "No packages found to match regex \"$regex\"\n";
