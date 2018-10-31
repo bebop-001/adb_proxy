@@ -61,6 +61,8 @@ my $USAGE = "USAGE of $Func:
         \"$Func device_0 ... device_n command ...\"
     To run a function on all devices, run
         \"$Func all command...\"
+    '-f'   Many options require user confirmation.  To bypass this
+    and \"force\" the operation, first argument should be '-f'.
     Possible commands are:\n"
     . join('', map {
         sprintf("    %-10s: %s\n", $_, $CmdTable{$_}{help});
@@ -91,8 +93,13 @@ if (grep $_ eq '-v', @ARGV) {
 }
 my $Force;
 if (grep $_ eq '-f', @ARGV) {
-    $Force++;
-    @ARGV = grep $_ ne '-f', @ARGV;
+    if (YesNo("Really, force operation?", 'y')) {
+        $Force++;
+        @ARGV = grep $_ ne '-f', @ARGV;
+    }
+    else {
+        die "Aborting...";
+    }
 }
 
 # executables needed.
@@ -333,15 +340,27 @@ sub InstallAPK {
     }
 }
 sub YesNo {
-    my ($prompt) = @_;
+    my $prompt = shift @_;
+    my $positive = (@_ > 0) ? shift @_ : "y";
     my $in = "";
     my $rv = "";
+    $positive = uc($positive);
+    if ($positive !~ /^[YN]$/) {
+        die "YesNo: positive response must be \"y\" or \"n\"\n";
+    }
+    my $p = ($positive eq "Y") ? "Y/n" : "y/N";
     do {
-        print "$prompt (y/n) > ";
-        chomp($in = uc(<STDIN>));
+        print "$prompt ($p) > ";
+        if ($Force) {
+            print "user selected '-f'\n";
+            $in = $positive;
+        }
+        else {
+            chomp($in = uc(<STDIN>));
+        }
         if ($in =~ /^\s*([YN])\s*$/) {
             $in = $1;
-            $rv = $in eq 'Y';
+            $rv = $in eq $positive;
         }
         else {
             print "Please enter y or n.\n";
@@ -361,7 +380,7 @@ sub UninstallPackage {
             printf("========== %d) %s\n",
                 $FoundDevices{$id}{index} + 1,
                 $FoundDevices{$id}{desc});
-            my @rm_pkg = grep $_ =~ /$package/, keys %byPackage;
+            my @rm_pkg = grep $_ =~ /$package/i, keys %byPackage;
             if (@rm_pkg == 0) {
                 print STDERR $CmdTable{$cmd}{help}
                     , "\nNo package matching \"$package\" not found.\n";
