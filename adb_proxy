@@ -151,7 +151,7 @@ sub GetInstalledAPK_by_regex {
     my %packages = ();
     my %installed = GetInstalledAPK($device);
     while (my($key, $val) = each %installed) {
-        if ("$key\n$val" =~ m{$regex}m) {
+        if ("$key\n$val" =~ m{$regex}im) {
             $packages{$key} = $val;
         } 
     }
@@ -573,7 +573,7 @@ sub getPackageAndIntent {
             $state++;
             next;
         }
-        if ($state == 1 && /^\s+[\d+a-f]+\s+($package\S+)/) {
+        if ($state == 1 && /^\s+[\d+a-f]+\s+($package\S+)/i) {
             $intent = $1;
             last;
         }
