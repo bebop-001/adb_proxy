@@ -1,9 +1,12 @@
 This is a simple PERL front end for adb which supports
+
 USAGE of adb_proxy:
     To run a function on one or more devices, run
         "adb_proxy device_0 ... device_n command ..."
     To run a function on all devices, run
         "adb_proxy all command..."
+    '-f'   Many options require user confirmation.  To bypass this
+    and "force" the operation, first argument should be '-f'.
     Possible commands are:
     install   : install package: Install t the apk files passed in.
         If the first arg is '-s', start the apk.  NOTE! if more
@@ -14,10 +17,10 @@ USAGE of adb_proxy:
     packages  : packages <regex>  List packages found on the device.
         Filter using <regex> if one is given.
 
-    permissions : permissions <regex> [revoke|grant a]
-        If neither grant or revoke are given, list granted
-        permissions. If grant or revoke is requested and 'a'
-        is requested, grant/revoke all privelages.  If 'a' is not
+    permissions: grantedPermissions <regex> [revoke|grant a]
+        if neither grant or revoke are given, list granted
+        permissions. if grant or revoke is requested and 'a'
+        is requested, grant/revoke all privelages.  if 'a' is not
         set, allow user to select privalage to grant/revoke.
         The regex allows the user to select the package to operate
         on.
@@ -36,7 +39,7 @@ USAGE of adb_proxy:
         by the regex.
 
     shell     : device_file host_file
-        Execute a shell command on host.
+        Execute an interactive shell command on host.
 
     start     : Start the app associated with the apk file passed in.
         If the first arg is '-s', start the apk.
@@ -48,5 +51,4 @@ USAGE of adb_proxy:
     uninstall : unistall package: remove the apk indicated
         by the package regex passed in.
 
-I use it on Linux.  It might run on CPAN under windows but I don't know.
-
+I use it on Linux.  It might run on Cygwin under windows but I don't know.
