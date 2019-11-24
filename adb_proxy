@@ -50,8 +50,8 @@ my %CmdTable = (
             . "        by the regex.\n"
     },
     'shell'      => {exec => \&DoShell
-        , help => "device_file host_file\n"
-            . "        Execute a shell command on host.\n"},
+        , help => "Execute an interactive shell command on host.\n"
+    },
     'uninstall' => {exec => \&UninstallPackage
         , help => "unistall package: remove the apk indicated\n"
             . "        by the package regex passed in." },
@@ -166,15 +166,14 @@ sub GetInstalledAPK_by_regex {
 }
 sub DoShell {
     for my $id (@SelectedDevices) {
-        print "======== $FoundDevices{$id}{desc}\n";
-        print"> @_\n";
-        shift @_; # get rid of the redundant shell commoan.
-        my $cmd = join(' ', $ADB, '-s', $id, 'shell', @_, '2>&1', '|');
-        open(my $fh, $cmd) || die "open \"$cmd\" FAILED\n";
-        my @lines = <$fh>;
-        $fh->close();
-        map { s/[\r|\n].*//s; } @lines;
-        print join("\n", @lines, "\n");
+        my $cmd = join(' ', $ADB, '-s', $id, 'shell');
+        print "Executing \"$cmd\"\n";
+        exec $cmd
+#        open(my $fh, $cmd) || die "open \"$cmd\" FAILED\n";
+#        my @lines = <$fh>;
+#        $fh->close();
+#        map { s/[\r|\n].*//s; } @lines;
+#        print join("\n", @lines, "\n");
     }
 }
 sub DoLs {
@@ -320,6 +319,7 @@ sub InstallAPK {
                 print "Uninstalling $apk_base\n"; 
                 $cmd = "$ADB -s $id uninstall $package 2>&1";
                 my $result = `$cmd`;
+                print "Uninstalling $apk_base: \"$cmd\"\n:Result:\"$result\"\n";
                 unless($result =~ /Success/) {
                     die "Uninstall FAILED: $result\n";
                 }
@@ -327,6 +327,7 @@ sub InstallAPK {
             print "Installing $apk_base\n";
             my @install_cmd = ("$ADB", '-s', $id, 'install', '-t', $apk, '2>&1');
             my $result = `@install_cmd`;
+            print "Installing; \"@install_cmd\"\nResuilt:\"$result\n";
             if($result =~ /Success/) {
                 print "Install succeeded.\n";
             }
