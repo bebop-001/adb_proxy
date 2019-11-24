@@ -38,8 +38,7 @@ USAGE of adb_proxy:
         Stop and then restart the app based on the package selected
         by the regex.
 
-    shell     : device_file host_file
-        Execute an interactive shell command on host.
+    shell     : Execute an interactive shell command on host.
 
     start     : Start the app associated with the apk file passed in.
         If the first arg is '-s', start the apk.
