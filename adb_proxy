@@ -18,6 +18,8 @@ my %CmdTable = (
             . "        If the first arg is '-s', start the apk.\n"},
     'ls' =>       {exec => \&DoLs
         , help => "Execute the ls command on the target.\n"},
+    'memory' => {exec => \&GetMemory
+        , help => "cat /proc/meminfo on the device.\n"},
     'packages' => {exec => \&GetPackages
         , help => "packages <regex>  List packages found on the device.\n"
             . "        Filter using <regex> if one is given.\n"},
@@ -221,6 +223,16 @@ sub PrintPackages {
     my $i = 1;
     while (my ($key, $val) = each %{$packageInfoRef}) {
         printf("%3d) %-${max}s %s\n", $i++, $key, $val)
+    }
+}
+sub GetMemory {
+    my ($cmd) = @_;
+    foreach my $device (@SelectedDevices) {
+        print "======== $FoundDevices{$device}{desc}\n";
+        my @cmd = ($ADB, '-s', $device,
+            qw(shell cat /proc/meminfo));
+        my @p = `@cmd`;
+        print "@p";
     }
 }
 sub GetPackages {
