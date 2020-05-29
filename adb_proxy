@@ -285,14 +285,14 @@ sub StartAPK {
         my @start_cmd = ("$ADB", '-s', $id, qw(shell am start -n)
             , "$package/$activity", '2>&1');
         my $result = `@start_cmd`;
-        if ($result =~ m{\bSuccess\b}) {
-            print "Success...\n";
+        if ($result =~ m{^(Error:.*)\n}ms) {
+            die "Start FAILED:\n$1\n";
         }
         elsif ($result =~ /task has been brought to the front/) {
             print "Current task was running and brought to front.\n";
         }
         else {
-            die "\"@start_cmd\" FAILED\n";
+            print "Success...\n";
         }
     }
 }
