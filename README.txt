@@ -5,6 +5,11 @@ USAGE of adb_proxy:
         "adb_proxy device_0 ... device_n command ..."
     To run a function on all devices, run
         "adb_proxy all command..."
+
+    A device can be indicated either from the device name or
+    by giving its index or giving its hostname.  Run "adb_proxy"
+    with no arguments to see format and hosthames.
+
     '-f'   Many options require user confirmation.  To bypass this
     and "force" the operation, first argument should be '-f'.
     Possible commands are:
@@ -13,6 +18,8 @@ USAGE of adb_proxy:
         than one apk file is passed in, only the last is started.
 
     ls        : Execute the ls command on the target.
+
+    memory    : cat /proc/meminfo on the device.
 
     packages  : packages <regex>  List packages found on the device.
         Filter using <regex> if one is given.
@@ -40,6 +47,9 @@ USAGE of adb_proxy:
 
     shell     : Execute an interactive shell command on host.
 
+    sign      : Sign the apk with the android .apk debug credentials
+        which should be at ~/.android/debug.keystore.
+
     start     : Start the app associated with the apk file passed in.
         If the first arg is '-s', start the apk.
 
@@ -49,5 +59,8 @@ USAGE of adb_proxy:
 
     uninstall : unistall package: remove the apk indicated
         by the package regex passed in.
-
 I use it on Linux.  It might run on Cygwin under windows but I don't know.
+
+
+
+

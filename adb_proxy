@@ -13,6 +13,10 @@ my %CmdTable = (
         , help => "install package: Install t the apk files passed in.\n"
             . "        If the first arg is '-s', start the apk.  NOTE! if more\n"
             . "        than one apk file is passed in, only the last is started.\n"},
+    'sign' => {exec => \&SignAPK
+        , help => "Sign the apk with the android .apk debug credentials\n"
+                  . "        which should be at ~/.android/debug.keystore.\n"
+    },
     'start' => {exec => \&StartAPK
         , help => "Start the app associated with the apk file passed in.\n"
             . "        If the first arg is '-s', start the apk.\n"},
@@ -80,6 +84,8 @@ chomp(my $ADB=`/usr/bin/which adb`);
 die $USAGE, "Failed to find adb\n" unless $ADB;
 chomp (my $AAPT = `/usr/bin/which aapt`);
 die $USAGE, "Failed to locate aapt.\n" unless ($AAPT);
+chomp (my $JAR_SIGNER = `/usr/bin/which jarsigner`);
+die $USAGE, "Failed to locate jarsigner.\n" unless ($JAR_SIGNER);
 
 my %FoundDevices = ();
 my %FoundDeviceHostnames = ();
@@ -311,6 +317,18 @@ sub StartAPK {
             print "Success...\n";
         }
     }
+}
+# Sign the APK passed in as in
+# https://stackoverflow.com/questions/10930331/how-to-sign-an-already-compiled-apk
+sub SignAPK {
+    my ($cmd) = shift @_;
+    my $apk_file = shift @_;
+    my $keystore = "$ENV{HOME}/.android/debug.keystore";
+
+    my @cmd = ($JAR_SIGNER, qw(-verbose -sigalg SHA1withRSA -digestalg SHA1
+        -keystore), $keystore,  $apk_file,
+        qw(androiddebugkey -storepass android));
+    system @cmd;
 }
 sub InstallAPK {
     my ($cmd) = shift @_;
@@ -722,10 +740,12 @@ unless (exists $CmdTable{$argv[0]}) {
 unless (@SelectedDevices) {
     @SelectedDevices = map {$FoundDeviceIndexes{$_}}
         sort {$a <=> $b} keys %FoundDeviceIndexes;
-    die $USAGE
-        , "No devices selected.  Found devices are:\n"
-        , PrintDevices()
-        , "\n";
+    if ($argv[0] ne 'sign') {
+        die $USAGE
+            , "No devices selected.  Found devices are:\n"
+            , PrintDevices()
+            , "\n";
+    }
 }
 if ($Verbose) {
     my $rules = "/etc/udev/rules.d/51-android.rules";
