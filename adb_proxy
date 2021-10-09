@@ -50,6 +50,11 @@ my %CmdTable = (
             . "        Stop and then restart the app based on the package selected\n"
             . "        by the regex.\n"
     },
+    'kill'  => {exec => \&KillPackage
+        , help =>  "regex_for_package\n"
+            . "        use the package manager to kill the process associaged\n"
+            . "with the package.\n"
+    },
     'stop'  => {exec => \&DoStop
         , help =>  "regex_for_package\n"
             . "        Stop and the app based on the package selected\n"
@@ -383,6 +388,26 @@ sub InstallAPK {
             if ($apk eq $apk_files[$#apk_files] && $startAPK) {
                 StartAPK('start', $apk);
             }
+        }
+    }
+}
+sub KillPackage {
+    my ($cmd) = shift @_;
+    my $package = shift @_;
+    unless (@SelectedDevices > 0 && $package) {
+        die $USAGE, $CmdTable{$cmd}{help}
+    }
+    for my $id (@SelectedDevices) {
+        my %byPackage = GetInstalledAPK($id);
+        my $clear_pkg = (grep $_ =~ /$package/i, keys %byPackage)[0];
+        unless ($clear_pkg) {
+            die $USAGE, $CmdTable{$cmd}{help},
+                "Failed to find a package for $package.\n";
+        }
+        my @exec = ($ADB, '-s', $id, qw(shell pm clear), $clear_pkg);
+        my @result = `@exec 2>&1`;
+        unless (grep /Success/, @result) {
+            die "\"@exec\" FAILED:\n@result\n";
         }
     }
 }
